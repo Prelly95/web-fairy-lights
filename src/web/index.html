@@ -78,6 +78,11 @@
     font-size: 0.95rem;
     transition: background 0.2s, border-color 0.2s, color 0.2s;
   }
+  #solar {
+    margin: 0;
+    font-size: 0.85rem;
+    color: #8a8070;
+  }
   .patterns button.selected {
     border-color: #f5c453;
     background: #2a2418;
@@ -106,6 +111,7 @@
     <label for="twinkle-speed">Twinkle speed: <span id="twinkle-speed-value">--</span>ms</label>
     <input type="range" id="twinkle-speed" min="10" max="400" step="10" value="200">
   </div>
+  <p id="solar">Solar: <span id="solar-value">--</span> V</p>
 
 <script>
   const powerBtn = document.getElementById('power');
@@ -116,6 +122,9 @@
   const breatheSpeedValue = document.getElementById('breathe-speed-value');
   const twinkleSpeedSlider = document.getElementById('twinkle-speed');
   const twinkleSpeedValue = document.getElementById('twinkle-speed-value');
+  const solarValue = document.getElementById('solar-value');
+  // The sensor is only read about once a second, so no need to poll faster than this.
+  const SOLAR_POLL_MS = 2000;
   let on = true;
 
   function setPowerUi(isOn) {
@@ -148,6 +157,19 @@
     breatheSpeedValue.textContent = (state.breatheMs / 1000).toFixed(1);
     twinkleSpeedSlider.value = state.twinkleMs;
     twinkleSpeedValue.textContent = state.twinkleMs;
+    solarValue.textContent = (state.solarMv / 1000).toFixed(2);
+  }
+
+  // Polled separately from refresh() so a slider mid-drag isn't snapped back to the
+  // device's value.
+  async function refreshSolar() {
+    try {
+      const res = await fetch('/api/state');
+      const state = await res.json();
+      solarValue.textContent = (state.solarMv / 1000).toFixed(2);
+    } catch (err) {
+      solarValue.textContent = '--';
+    }
   }
 
   powerBtn.addEventListener('click', async () => {
@@ -188,6 +210,7 @@
   });
 
   refresh();
+  setInterval(refreshSolar, SOLAR_POLL_MS);
 </script>
 </body>
 </html>

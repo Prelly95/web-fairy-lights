@@ -1,6 +1,8 @@
 use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU8, Ordering};
 
-use crate::lights::{MAX_BREATHE_MS, MAX_TWINKLE_INTERVAL_MS, MIN_BREATHE_MS, MIN_TWINKLE_INTERVAL_MS};
+use crate::lights::{
+    MAX_BREATHE_MS, MAX_TWINKLE_INTERVAL_MS, MIN_BREATHE_MS, MIN_TWINKLE_INTERVAL_MS,
+};
 use crate::pattern::Pattern;
 
 /// Light state shared between the physical button, the HTTP handlers (each of which
@@ -11,6 +13,8 @@ pub struct SharedState {
     pattern: AtomicU8,
     breathe_ms: AtomicU16,
     twinkle_interval_ms: AtomicU16,
+    /// Latest solar sense-pin reading; written by the main loop, shown on the web page.
+    solar_mv: AtomicU16,
 }
 
 impl SharedState {
@@ -25,10 +29,14 @@ impl SharedState {
             on: AtomicBool::new(on),
             brightness_percent: AtomicU8::new(brightness_percent.min(100)),
             pattern: AtomicU8::new(pattern.to_code()),
-            breathe_ms: AtomicU16::new(breathe_ms.clamp(MIN_BREATHE_MS as u16, MAX_BREATHE_MS as u16)),
-            twinkle_interval_ms: AtomicU16::new(
-                twinkle_interval_ms.clamp(MIN_TWINKLE_INTERVAL_MS as u16, MAX_TWINKLE_INTERVAL_MS as u16),
+            breathe_ms: AtomicU16::new(
+                breathe_ms.clamp(MIN_BREATHE_MS as u16, MAX_BREATHE_MS as u16),
             ),
+            twinkle_interval_ms: AtomicU16::new(twinkle_interval_ms.clamp(
+                MIN_TWINKLE_INTERVAL_MS as u16,
+                MAX_TWINKLE_INTERVAL_MS as u16,
+            )),
+            solar_mv: AtomicU16::new(0),
         }
     }
 
@@ -45,7 +53,8 @@ impl SharedState {
     }
 
     pub fn set_brightness_percent(&self, percent: u8) {
-        self.brightness_percent.store(percent.min(100), Ordering::Relaxed);
+        self.brightness_percent
+            .store(percent.min(100), Ordering::Relaxed);
     }
 
     pub fn pattern(&self) -> Pattern {
@@ -70,7 +79,18 @@ impl SharedState {
     }
 
     pub fn set_twinkle_interval_ms(&self, ms: u16) {
-        let ms = ms.clamp(MIN_TWINKLE_INTERVAL_MS as u16, MAX_TWINKLE_INTERVAL_MS as u16);
+        let ms = ms.clamp(
+            MIN_TWINKLE_INTERVAL_MS as u16,
+            MAX_TWINKLE_INTERVAL_MS as u16,
+        );
         self.twinkle_interval_ms.store(ms, Ordering::Relaxed);
+    }
+
+    pub fn solar_mv(&self) -> u16 {
+        self.solar_mv.load(Ordering::Relaxed)
+    }
+
+    pub fn set_solar_mv(&self, mv: u16) {
+        self.solar_mv.store(mv, Ordering::Relaxed);
     }
 }

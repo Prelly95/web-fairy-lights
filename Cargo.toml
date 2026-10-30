@@ -31,3 +31,8 @@ embassy-time = { version = "0.5", features = ["generic-queue-8"] }
 
 [build-dependencies]
 embuild = "0.33"
+
+# Pulls the `mdns` component (removed from ESP-IDF core in v5.x, now managed via the
+# component registry) into the build, so `esp_idf_svc::mdns` is available.
+[[package.metadata.esp-idf-sys.extra_components]]
+remote_component = { name = "espressif/mdns", version = "*" }

@@ -1,4 +1,5 @@
 use anyhow::Result;
+use esp_idf_hal::delay::FreeRtos;
 use esp_idf_hal::ledc::LedcDriver;
 
 use crate::pattern::Pattern;
@@ -10,6 +11,9 @@ pub const MAX_BREATHE_MS: u32 = 10_000;
 /// toggle does that. Keeps a faint glow during breathing/twinkling instead of a harder,
 /// more noticeable blink to fully dark.
 const FLOOR_DUTY: u32 = 1;
+/// A blink is at least this bright (percent of the duty range) so it stays visible even
+/// when the lights are set very dim.
+const BLINK_MIN_PERCENT: u32 = 50;
 /// Valid range for how often each side jumps to a fresh random brightness while
 /// twinkling.
 pub const MIN_TWINKLE_INTERVAL_MS: u32 = 10;
@@ -82,7 +86,8 @@ impl<'d> Lights<'d> {
             breathe_ms: breathe_ms.clamp(MIN_BREATHE_MS, MAX_BREATHE_MS),
             twinkle_a_remaining_ms: 0,
             twinkle_b_remaining_ms: 0,
-            twinkle_interval_ms: twinkle_interval_ms.clamp(MIN_TWINKLE_INTERVAL_MS, MAX_TWINKLE_INTERVAL_MS),
+            twinkle_interval_ms: twinkle_interval_ms
+                .clamp(MIN_TWINKLE_INTERVAL_MS, MAX_TWINKLE_INTERVAL_MS),
         };
         lights.activate_current_pattern()?;
         Ok(lights)
@@ -106,14 +111,52 @@ impl<'d> Lights<'d> {
     /// delta into that same duration instead, which stays within the hardware's limits
     /// for any delta the two channels can realistically have here.
     fn fade_side_a(&mut self, target: u32, desired_ms: u32) -> Result<()> {
-        fade_channel(&mut self.side_a, self.duty_a, target, desired_ms, self.timer_frequency_hz)?;
+        fade_channel(
+            &mut self.side_a,
+            self.duty_a,
+            target,
+            desired_ms,
+            self.timer_frequency_hz,
+        )?;
         self.duty_a = target;
         Ok(())
     }
 
     fn fade_side_b(&mut self, target: u32, desired_ms: u32) -> Result<()> {
-        fade_channel(&mut self.side_b, self.duty_b, target, desired_ms, self.timer_frequency_hz)?;
+        fade_channel(
+            &mut self.side_b,
+            self.duty_b,
+            target,
+            desired_ms,
+            self.timer_frequency_hz,
+        )?;
         self.duty_b = target;
+        Ok(())
+    }
+
+    /// Flashes both sides together `flashes` times, `flash_ms` lit and `flash_ms` dark,
+    /// then hands control back to whatever the lights were doing (or leaves them off, if
+    /// they were off). Blocks for the whole animation - it's a short acknowledgement, not
+    /// something to run during normal operation.
+    pub fn blink(&mut self, flashes: u32, flash_ms: u32) -> Result<()> {
+        self.side_a.fade_stop()?;
+        self.side_b.fade_stop()?;
+        let lit = self.half_period * self.brightness_percent.max(BLINK_MIN_PERCENT) / 100;
+
+        for _ in 0..flashes {
+            self.side_a.set_duty(lit)?;
+            self.side_b.set_duty(lit)?;
+            FreeRtos::delay_ms(flash_ms);
+            self.side_a.set_duty(0)?;
+            self.side_b.set_duty(0)?;
+            FreeRtos::delay_ms(flash_ms);
+        }
+
+        self.duty_a = 0;
+        self.duty_b = 0;
+        if self.on {
+            self.activate_current_pattern()?;
+        }
         Ok(())
     }
 
@@ -253,7 +296,12 @@ impl<'d> Lights<'d> {
 
         // Restart the breathing cycle from the top on the new schedule, rather than
         // leaving the in-flight leg to finish out the old (possibly much longer) one.
-        if self.on && matches!(self.pattern, Pattern::AlternateBreathe | Pattern::SyncBreathe) {
+        if self.on
+            && matches!(
+                self.pattern,
+                Pattern::AlternateBreathe | Pattern::SyncBreathe
+            )
+        {
             self.breathe_phase_high = true;
             self.start_breathe_leg()?;
         }
@@ -303,12 +351,14 @@ impl<'d> Lights<'d> {
                 }
             }
             Pattern::Twinkle => {
-                self.twinkle_a_remaining_ms = self.twinkle_a_remaining_ms.saturating_sub(elapsed_ms);
+                self.twinkle_a_remaining_ms =
+                    self.twinkle_a_remaining_ms.saturating_sub(elapsed_ms);
                 if self.twinkle_a_remaining_ms == 0 {
                     self.retarget_twinkle_a()?;
                 }
 
-                self.twinkle_b_remaining_ms = self.twinkle_b_remaining_ms.saturating_sub(elapsed_ms);
+                self.twinkle_b_remaining_ms =
+                    self.twinkle_b_remaining_ms.saturating_sub(elapsed_ms);
                 if self.twinkle_b_remaining_ms == 0 {
                     self.retarget_twinkle_b()?;
                 }
